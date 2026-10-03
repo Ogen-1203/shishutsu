@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>支出記録</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#FFFFFF">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="支出記録">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<style>
+  :root {
+    --bg: #F7F6F3;
+    --surface: #FFFFFF;
+    --border: #E2DED8;
+    --text-primary: #1A1714;
+    --text-secondary: #7A746C;
+    --text-muted: #B0A99F;
+    --accent: #2C6E49;
+    --accent-light: #EAF2ED;
+    --danger: #C0392B;
+    --danger-light: #FDECEA;
+    --warn: #B7791F;
+    --warn-light: #FFF6E0;
+    --font-num: 'SF Mono', 'Courier New', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { overflow-x: hidden; max-width: 100vw; }
+
+  body {
+    background: var(--bg);
+    color: var(--text-primary);
+    font-family: -apple-system, 'Hiragino Sans', sans-serif;
+    font-size: 14px;
+    min-height: 100vh;
+  }
+
+  /* ローディング */
+  .loading-screen {
+    position: fixed; inset: 0; background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 999; flex-direction: column; gap: 12px;
+  }
+  .loading-screen.hidden { display: none; }
+  .spinner {
+    width: 32px; height: 32px; border: 3px solid var(--border);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { font-size: 13px; color: var(--text-muted); }
+
+  /* ヘッダー */
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 14px 16px; position: sticky; top: 0; z-index: 100;
+    padding-top: calc(14px + env(safe-area-inset-top)); /* iPhoneのノッチ対策 */
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .header-title { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
+  .month-nav { display: flex; align-items: center; gap: 6px; }
+  .month-nav button {
+    background: none; border: 1px solid var(--border); border-radius: 6px;
+    width: 30px; height: 30px; cursor: pointer; color: var(--text-secondary);
+    font-size: 16px; display: flex; align-items: center; justify-content: center;
+  }
+  .month-label { font-size: 14px; font-weight: 600; min-width: 72px; text-align: center; }
+
+  /* サマリー */
+  .summary-bar {
+    background: var(--accent); padding: 16px;
+    display: grid; grid-template-columns: 1fr 1px 1fr; align-items: center;
+  }
+  .summary-divider { background: rgba(255,255,255,0.25); height: 40px; width: 1px; justify-self: center; }
+  .summary-item { display: flex; flex-direction: column; gap: 4px; padding: 0 16px; }
+  .summary-item:first-child { padding-left: 0; }
+  .summary-item:last-child  { padding-right: 0; }
+  .summary-label { font-size: 10px; color: rgba(255,255,255,0.65); letter-spacing: 0.4px; }
+  .summary-name  { font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.85); margin-bottom: 1px; }
+  .summary-value { font-family: var(--font-num); font-weight: 700; color: #fff; letter-spacing: -0.5px; font-size: 26px; }
+
+  /* 王冠 */
+  .crown {
+    font-size: 12px; margin-left: 3px;
+    display: inline-block;
+    vertical-align: bottom;
+    line-height: 1;
+    animation: crown-pop 0.4s cubic-bezier(.4,0,.2,1);
+  }
+  @keyframes crown-pop {
+    0%   { transform: scale(0.4) rotate(-20deg); opacity: 0; }
+    70%  { transform: scale(1.25) rotate(5deg); }
+    100% { transform: scale(1) rotate(0deg); opacity: 1; }
+  }
+
+  /* タブ */
+  .tab-bar {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    display: flex; padding: 0 16px;
+  }
+  .tab-btn {
+    flex: 1; background: none; border: none; border-bottom: 2px solid transparent;
+    padding: 12px 0; font-size: 14px; font-weight: 600; color: var(--text-muted);
+    cursor: pointer; transition: color 0.15s, border-color 0.15s;
+  }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ★追加：記録状況バナー */
+  .status-area { padding: 12px 16px 0; }
+  .status-area:empty { display: none; }
+  .status-banner {
+    border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px;
+    font-size: 13px; font-weight: 600;
+  }
+  .status-banner.missed { background: var(--danger-light); color: var(--danger); }
+  .status-banner.today  { background: var(--warn-light);   color: var(--warn); }
+  .status-actions { display: flex; gap: 8px; }
+  .status-actions button {
+    flex: 1; border-radius: 8px; padding: 9px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .status-actions .primary { background: var(--accent); color: #fff; border: none; }
+  .status-actions .ghost   { background: #fff; color: var(--text-secondary); border: 1px solid var(--border); }
+  .streak { font-size: 12px; color: var(--text-secondary); font-weight: 600; }
+
+  /* カテゴリ */
+  .section { padding: 14px 16px 0; }
+  .section-label {
+    font-size: 10px; font-weight: 700; color: var(--text-muted);
+    letter-spacing: 0.6px; text-transform: uppercase; margin-bottom: 10px;
+  }
+  .cat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+  .cat-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px;
+    cursor: pointer; transition: opacity 0.15s, border-color 0.15s, background 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .cat-card:active { transform: scale(0.97); }
+  .cat-card.selected { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-light); }
+  .cat-grid.filtering .cat-card:not(.selected) { opacity: 0.45; }
+  /* 絞り込み中の表示 */
+  .filter-chip {
+    display: inline-flex; align-items: center; gap: 4px; margin-left: 6px;
+    background: var(--accent); color: #fff; border: none; border-radius: 9px;
+    height: 18px; line-height: 18px; padding: 0 8px;
+    font-size: 10px; font-weight: 700; cursor: pointer; letter-spacing: 0;
+    font-family: inherit; -webkit-appearance: none; appearance: none;
+  }
+  .cat-name   { font-size: 10px; color: var(--text-secondary); margin-bottom: 3px; }
+  .cat-amount { font-family: var(--font-num); font-size: 13px; font-weight: 700; }
+  .cat-bar { height: 3px; background: var(--border); border-radius: 2px; margin-top: 5px; overflow: hidden; }
+  .cat-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.4s; }
+
+  /* 明細 */
+  .list-section { padding: 14px 16px 100px; }
+
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+    height: 20px; /* 絞り込み表示の有無で高さが変わらないよう固定 */
+  }
+  .section-header .section-label { margin-bottom: 0; display: flex; align-items: center; height: 20px; }
+
+  .last-input-bar {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 11px; color: var(--text-muted);
+  }
+  .last-input-dot {
+    width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+  }
+  .last-input-dot.fresh { background: #34C759; }
+  .last-input-dot.stale { background: var(--text-muted); }
+
+  .entry-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; margin-bottom: 8px; overflow: hidden;
+  }
+  .entry-view { display: flex; align-items: center; padding: 12px; gap: 10px; }
+  .entry-left { flex: 1; min-width: 0; }
+  .entry-top  { display: flex; align-items: center; gap: 7px; margin-bottom: 3px; }
+  .entry-category { font-size: 14px; font-weight: 600; }
+  .entry-bottom { display: flex; align-items: center; gap: 8px; }
+  .entry-date  { font-family: var(--font-num); font-size: 11px; color: var(--text-muted); }
+  .entry-memo  { font-size: 11px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .entry-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .entry-amount { font-family: var(--font-num); font-size: 16px; font-weight: 700; letter-spacing: -0.5px; }
+  .entry-actions { display: flex; gap: 5px; }
+
+  .btn-icon {
+    background: none; border: 1px solid var(--border); border-radius: 6px;
+    width: 30px; height: 30px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0;
+  }
+  .btn-icon.edit:active { background: var(--accent-light); border-color: var(--accent); }
+  .btn-icon.del:active  { background: var(--danger-light);  border-color: var(--danger); }
+
+  /* 編集 */
+  .entry-edit {
+    display: none; padding: 12px; border-top: 1px solid var(--border);
+    background: #FFFEF5; flex-direction: column; gap: 10px;
+  }
+  .entry-card.editing .entry-edit { display: flex; }
+  .entry-card.editing .entry-view { background: #FFFEF5; }
+
+  .edit-row   { display: flex; gap: 8px; align-items: center; }
+  .edit-label { font-size: 11px; color: var(--text-muted); width: 40px; flex-shrink: 0; }
+  .cell-input {
+    flex: 1; border: 1px solid var(--accent); border-radius: 6px;
+    padding: 7px 10px; font-size: 14px; font-family: inherit;
+    background: #fff; outline: none; min-width: 0;
+  }
+  .cell-input.num { font-family: var(--font-num); text-align: right; }
+  select.cell-input {
+    -webkit-appearance: none; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%237A746C'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 10px center;
+    padding-right: 28px; cursor: pointer;
+  }
+  /* ★追加：日付入力 */
+  input[type=date].cell-input { -webkit-appearance: none; appearance: none; min-height: 36px; }
+  .cell-input.past { background: var(--warn-light); border-color: var(--warn); }
+  .date-chips { display: flex; gap: 6px; padding-left: 48px; margin-top: -4px; }
+  .date-chip {
+    flex: 1; background: #fff; border: 1px solid var(--border); border-radius: 16px;
+    padding: 6px 0; font-size: 12px; color: var(--text-secondary); cursor: pointer;
+  }
+  .date-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+
+  /* ★追加：よく使うメモ */
+  .memo-chips { display: flex; gap: 6px; flex-wrap: wrap; padding-left: 48px; margin-top: -4px; }
+  .memo-chips:empty { display: none; }
+  .memo-chip {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 14px;
+    padding: 5px 10px; font-size: 12px; color: var(--text-secondary); cursor: pointer;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  .edit-btns { display: flex; gap: 8px; }
+  .btn-save {
+    flex: 1; background: var(--accent); color: #fff; border: none;
+    border-radius: 8px; padding: 10px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .btn-save:disabled { opacity: 0.55; cursor: default; }
+  .btn-cancel {
+    flex: 1; background: none; color: var(--text-secondary); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px; font-size: 14px; cursor: pointer;
+  }
+
+  .empty-state { text-align: center; padding: 40px 0; color: var(--text-muted); font-size: 13px; }
+
+  /* 追加ボタン */
+  .fab {
+    position: fixed; bottom: calc(28px + env(safe-area-inset-bottom)); right: 20px;
+    width: 52px; height: 52px; border-radius: 50%;
+    background: var(--accent); color: #fff; border: none;
+    font-size: 28px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; z-index: 150;
+    box-shadow: 0 4px 16px rgba(44,110,73,0.35);
+    transition: transform 0.15s;
+  }
+  .fab:active { transform: scale(0.93); }
+
+  /* 追加シート */
+  .add-sheet {
+    position: fixed; inset: 0; z-index: 200;
+    display: flex; align-items: flex-end; justify-content: center;
+    background: rgba(0,0,0,0.4);
+    opacity: 0; pointer-events: none; transition: opacity 0.2s;
+  }
+  .add-sheet.open { opacity: 1; pointer-events: auto; }
+  .add-form {
+    background: var(--surface); border-radius: 16px 16px 0 0;
+    padding: 20px 20px calc(36px + env(safe-area-inset-bottom)); width: 100%; max-width: 480px;
+    transform: translateY(100%);
+    transition: transform 0.25s cubic-bezier(.4,0,.2,1);
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .add-sheet.open .add-form { transform: translateY(0); }
+  .add-form-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .add-form-title  { font-size: 16px; font-weight: 700; }
+  .add-form-close  { background: none; border: none; font-size: 20px; color: var(--text-muted); cursor: pointer; padding: 4px; }
+
+  /* 削除ダイアログ */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+    z-index: 200; display: flex; align-items: flex-end; justify-content: center;
+  }
+  .dialog { background: var(--surface); border-radius: 16px 16px 0 0; padding: 24px 20px calc(36px + env(safe-area-inset-bottom)); width: 100%; max-width: 480px; }
+  .dialog-title { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+  .dialog-row {
+    background: var(--bg); border-radius: 8px; padding: 12px 14px; margin-bottom: 20px;
+    font-size: 13px; line-height: 1.8; display: grid; grid-template-columns: 44px 1fr; gap: 0 8px;
+  }
+  .dialog-row .dl { color: var(--text-muted); font-size: 11px; align-self: center; }
+  .dialog-actions { display: flex; gap: 10px; }
+  .btn-danger {
+    flex: 1; background: var(--danger); color: #fff; border: none;
+    border-radius: 10px; padding: 13px; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  .btn-danger:disabled { opacity: 0.55; cursor: default; }
+  .btn-secondary {
+    flex: 1; background: none; color: var(--text-secondary); border: 1px solid var(--border);
+    border-radius: 10px; padding: 13px; font-size: 15px; cursor: pointer;
+  }
+
+  /* トースト */
+  .toast {
+    position: fixed; bottom: calc(24px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
+    background: var(--text-primary); color: #fff; padding: 10px 18px;
+    border-radius: 20px; font-size: 13px; font-weight: 500;
+    z-index: 400; white-space: nowrap; opacity: 0; transition: opacity 0.2s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div class="loading-screen" id="loadingScreen">
+  <div class="spinner"></div>
+  <div class="loading-text">読み込み中...</div>
+</div>
+
+<header>
+  <div class="header-title">家計簿</div>
+  <div class="month-nav">
+    <button onclick="changeMonth(-1)">‹</button>
+    <span class="month-label" id="monthLabel"></span>
+    <button onclick="changeMonth(1)">›</button>
+  </div>
+</header>
+
+<div class="summary-bar">
+  <div class="summary-item">
+    <span class="summary-label">今月の支出</span>
+    <span class="summary-name">Genya<span class="crown" id="crownGenya" style="display:none">👑</span></span>
+    <span class="summary-value" id="totalGenya">¥—</span>
+  </div>
+  <div class="summary-divider"></div>
+  <div class="summary-item">
+    <span class="summary-label">今月の支出</span>
+    <span class="summary-name">Erika<span class="crown" id="crownPartner" style="display:none">👑</span></span>
+    <span class="summary-value" id="totalPartner">¥—</span>
+  </div>
+</div>
+
+<div class="tab-bar">
+  <button class="tab-btn active" onclick="switchTab('genya', this)">Genya</button>
+  <button class="tab-btn"        onclick="switchTab('partner', this)">Erika</button>
+</div>
+
+<!-- ★追加：記録状況（昨日の記録漏れ・連続記録） -->
+<div class="status-area" id="statusArea"></div>
+
+<div class="tab-panel active" id="panel-genya">
+  <div class="section">
+    <div style="height:14px"></div>
+    <div class="section-label">カテゴリ別</div>
+    <div class="cat-grid" id="catGrid-genya"></div>
+  </div>
+  <div class="list-section">
+    <div style="height:14px"></div>
+    <div class="section-header">
+      <div class="section-label">明細<span id="filterChip-genya"></span></div>
+      <div class="last-input-bar" id="lastInput-genya">
+        <span class="last-input-dot stale"></span><span>—</span>
+      </div>
+    </div>
+    <div id="list-genya"></div>
+  </div>
+</div>
+
+<div class="tab-panel" id="panel-partner">
+  <div class="section">
+    <div style="height:14px"></div>
+    <div class="section-label">カテゴリ別</div>
+    <div class="cat-grid" id="catGrid-partner"></div>
+  </div>
+  <div class="list-section">
+    <div style="height:14px"></div>
+    <div class="section-header">
+      <div class="section-label">明細<span id="filterChip-partner"></span></div>
+      <div class="last-input-bar" id="lastInput-partner">
+        <span class="last-input-dot stale"></span><span>—</span>
+      </div>
+    </div>
+    <div id="list-partner"></div>
+  </div>
+</div>
+
+<button class="fab" onclick="openAdd()">＋</button>
+
+<div class="add-sheet" id="addSheet">
+  <div class="add-form">
+    <div class="add-form-header">
+      <span class="add-form-title">新規追加</span>
+      <button class="add-form-close" onclick="closeAdd()">✕</button>
+    </div>
+    <div class="edit-row">
+      <span class="edit-label">記録者</span>
+      <select class="cell-input" id="add-recorder">
+        <option value="Genya">Genya</option>
+        <option value="partner">Erika</option>
+      </select>
+    </div>
+    <!-- ★追加：日付 -->
+    <div class="edit-row">
+      <span class="edit-label">日付</span>
+      <input class="cell-input" type="date" id="add-date" onchange="refreshDateUi()">
+    </div>
+    <div class="date-chips">
+      <button type="button" class="date-chip" data-offset="0"  onclick="setAddDate(0)">今日</button>
+      <button type="button" class="date-chip" data-offset="-1" onclick="setAddDate(-1)">昨日</button>
+      <button type="button" class="date-chip" data-offset="-2" onclick="setAddDate(-2)">一昨日</button>
+    </div>
+    <div class="edit-row">
+      <span class="edit-label">分類</span>
+      <select class="cell-input" id="add-cat" onchange="renderMemoChips()"></select>
+    </div>
+    <div class="edit-row">
+      <span class="edit-label">金額</span>
+      <input class="cell-input num" type="number" id="add-amt" placeholder="0">
+    </div>
+    <div class="edit-row">
+      <span class="edit-label">メモ</span>
+      <input class="cell-input" type="text" id="add-memo" placeholder="（任意）">
+    </div>
+    <!-- ★追加：よく使うメモ（タップで入力） -->
+    <div class="memo-chips" id="memoChips"></div>
+    <div class="edit-btns" style="margin-top:4px">
+      <button class="btn-cancel" onclick="closeAdd()">取消</button>
+      <button class="btn-save" id="addSaveBtn" data-label="追加する" onclick="submitAdd()">追加する</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="deleteDialog" style="display:none">
+  <div class="dialog">
+    <div class="dialog-title">この明細を削除しますか？</div>
+    <div class="dialog-row">
+      <span class="dl">日付</span><span id="d-date"></span>
+      <span class="dl">分類</span><span id="d-cat"></span>
+      <span class="dl">金額</span><span id="d-amt"></span>
+      <span class="dl">メモ</span><span id="d-memo"></span>
+    </div>
+    <div class="dialog-actions">
+      <button class="btn-secondary" onclick="closeDelete()">キャンセル</button>
+      <button class="btn-danger" id="deleteConfirmBtn" data-label="削除する" onclick="execDelete()">削除する</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================
+// 設定：Apps Script を「ウェブアプリ」としてデプロイした URL（/exec で終わる）を貼る
+// ============================================================
+const API_URL = 'https://script.google.com/macros/s/AKfycbyxgEcaWL5bn0OOcBF3D2QX22p4XTkELFeYJY-n3-s08UcJ8zE7ui2Jvi-3R8rKwRvs/exec';
+
+// ============================================================
+// サーバー呼び出し（google.script.run と同じ書き方で使えるようにする）
+//   google.script.run.withSuccessHandler(f).withFailureHandler(g).getData()
+//   → Apps Script に { fn: 'getData', args: [] } を送り、結果を f に渡す
+// ============================================================
+const google = { script: { get run() { return makeRunner(); } } };
+
+function makeRunner() {
+  let onOk = () => {}, onNg = (e) => console.error(e);
+  const r = {
+    withSuccessHandler(f) { onOk = f; return r; },
+    withFailureHandler(f) { onNg = f; return r; },
+  };
+  ['getData', 'getStatus', 'addEntry', 'updateEntry', 'deleteEntry', 'markNoSpend'].forEach(fn => {
+    r[fn] = (...args) => callApi(fn, args).then(onOk, onNg);
+  });
+  return r;
+}
+
+async function callApi(fn, args) {
+  if (!API_URL || /ここに/.test(API_URL)) throw new Error('index.html の API_URL が設定されていません');
+  // text/plain で送ると、ブラウザの事前確認（CORS）が起きず Apps Script にそのまま届く
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ fn, args }),
+  });
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error || '通信に失敗しました');
+  return json.data;
+}
+
+// 画面ファイルを端末に保存して、起動を速くする
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+</script>
+<script>
+// ============================================================
+// 設定
+// ============================================================
+let CATEGORIES = ['食費', '交通費', '趣味', '日用品・美容', '医療費', 'その他']; // サーバーから上書き
+
+const RECORDER_MAP = {
+  genya:   'Genya',
+  partner: 'Erika'
+};
+
+const TODAY_REMIND_HOUR = 20; // この時刻以降、今日の記録がなければ表示
+const MEMO_CHIP_COUNT   = 6;  // よく使うメモの表示数
+
+// ============================================================
+// 状態
+// ============================================================
+let allData    = [];
+let currentTab = 'genya';
+let currentYear, currentMonth;
+let pendingDeleteId = null;
+let catFilter = { genya: null, partner: null }; // タップで選んだ分類（null＝すべて）
+let statusCache = {}; // { Genya: {today, yesterday, streak}, Erika: {...} }
+
+// ============================================================
+// 締め日（25日始まり）
+// ============================================================
+function getBillingMonth(now) {
+  let year  = now.getFullYear();
+  let month = now.getMonth() + 1;
+  if (now.getDate() >= 25) {
+    month += 1;
+    if (month > 12) { month = 1; year += 1; }
+  }
+  return { year, month };
+}
+
+/** 期間を 'yyyy-MM-dd' の文字列で返す（前月25日〜当月24日） */
+function getPeriod(year, month) {
+  let startYear  = year;
+  let startMonth = month - 1;
+  if (startMonth < 1) { startMonth = 12; startYear -= 1; }
+  return {
+    start: `${startYear}-${pad(startMonth)}-25`,
+    end:   `${year}-${pad(month)}-24`
+  };
+}
+
+// ============================================================
+// 初期化・読み込み
+// ============================================================
+window.addEventListener('DOMContentLoaded', () => {
+  const bm = getBillingMonth(new Date());
+  currentYear  = bm.year;
+  currentMonth = bm.month;
+  updateMonthLabel();
+  renderCategoryOptions();
+  loadData();
+});
+
+function loadData() {
+  showLoading(true);
+  google.script.run
+    .withSuccessHandler(res => {
+      applyResponse(res);
+      showLoading(false);
+    })
+    .withFailureHandler(() => {
+      showToast('読み込みに失敗しました');
+      showLoading(false);
+    })
+    .getData();
+  loadAllStatus();
+}
+
+/** サーバーから返った {categories, entries} を反映 */
+function applyResponse(res) {
+  if (res.categories && res.categories.length) {
+    CATEGORIES = res.categories;
+    renderCategoryOptions();
+  }
+  allData = res.entries || [];
+  render();
+}
+
+function renderCategoryOptions() {
+  const sel = document.getElementById('add-cat');
+  const cur = sel.value;
+  sel.innerHTML = CATEGORIES.map(c => `<option>${esc(c)}</option>`).join('');
+  if (CATEGORIES.includes(cur)) sel.value = cur;
+}
+
+// ============================================================
+// 月切り替え
+// ============================================================
+function changeMonth(delta) {
+  currentMonth += delta;
+  if (currentMonth > 12) { currentMonth = 1;  currentYear++; }
+  if (currentMonth < 1)  { currentMonth = 12; currentYear--; }
+  updateMonthLabel();
+  render();
+}
+
+function updateMonthLabel() {
+  document.getElementById('monthLabel').textContent = `${currentYear}年${currentMonth}月`;
+}
+
+// ============================================================
+// 描画
+// ============================================================
+function render() {
+  const { start, end } = getPeriod(currentYear, currentMonth);
+  const filtered = allData.filter(d => d.ymd >= start && d.ymd <= end);
+
+  renderSummary(filtered);
+  renderCatGrid('genya',   filtered);
+  renderCatGrid('partner', filtered);
+  renderList('genya',   filtered);
+  renderList('partner', filtered);
+}
+
+function renderSummary(data) {
+  const gTotal = data.filter(d => d.recorder === RECORDER_MAP.genya)
+                     .reduce((s, d) => s + Number(d.amount), 0);
+  const pTotal = data.filter(d => d.recorder === RECORDER_MAP.partner)
+                     .reduce((s, d) => s + Number(d.amount), 0);
+  document.getElementById('totalGenya').textContent   = '¥' + gTotal.toLocaleString();
+  document.getElementById('totalPartner').textContent = '¥' + pTotal.toLocaleString();
+
+  const cg = document.getElementById('crownGenya');
+  const cp = document.getElementById('crownPartner');
+  cg.style.display = 'none';
+  cp.style.display = 'none';
+  if (gTotal > 0 || pTotal > 0) {
+    if (gTotal < pTotal)      cg.style.display = 'inline-block';
+    else if (pTotal < gTotal) cp.style.display = 'inline-block';
+  }
+}
+
+function renderCatGrid(tabId, data) {
+  const recorderVal = RECORDER_MAP[tabId];
+  const myData = data.filter(d => d.recorder === recorderVal);
+  const maxAmt = Math.max(...CATEGORIES.map(c =>
+    myData.filter(d => d.category === c).reduce((s, d) => s + Number(d.amount), 0)
+  ), 1);
+
+  const html = CATEGORIES.map(cat => {
+    const amt = myData.filter(d => d.category === cat).reduce((s, d) => s + Number(d.amount), 0);
+    const pct = Math.round((amt / maxAmt) * 100);
+    const sel = catFilter[tabId] === cat ? ' selected' : '';
+    return `
+      <div class="cat-card${sel}" data-cat="${esc(cat)}" onclick="toggleCatFilter('${tabId}', this.dataset.cat)">
+        <div class="cat-name">${esc(cat)}</div>
+        <div class="cat-amount">¥${amt.toLocaleString()}</div>
+        <div class="cat-bar"><div class="cat-bar-fill" style="width:${pct}%"></div></div>
+      </div>`;
+  }).join('');
+  const grid = document.getElementById('catGrid-' + tabId);
+  grid.innerHTML = html;
+  grid.classList.toggle('filtering', !!catFilter[tabId]);
+}
+
+function renderList(tabId, data) {
+  const recorderVal = RECORDER_MAP[tabId];
+  // シートと同じ並び（日付順）の逆＝新しい日付が上
+  const myData = data
+    .filter(d => d.recorder === recorderVal)
+    .filter(d => !catFilter[tabId] || d.category === catFilter[tabId])
+    .sort((a, b) => b.order - a.order);
+
+  // 絞り込み中の表示（タップで解除）
+  const chipEl = document.getElementById('filterChip-' + tabId);
+  if (chipEl) {
+    chipEl.innerHTML = catFilter[tabId]
+      ? `<button class="filter-chip" onclick="toggleCatFilter('${tabId}', null)">${esc(catFilter[tabId])} ✕</button>`
+      : '';
+  }
+
+  // 最終入力（実際に入力した時刻がいちばん新しいもの）
+  const barEl = document.getElementById('lastInput-' + tabId);
+  const mine  = allData.filter(d => d.recorder === recorderVal);
+  if (barEl) {
+    if (mine.length === 0) {
+      barEl.innerHTML = '<span class="last-input-dot stale"></span><span>入力なし</span>';
+    } else {
+      const latest  = mine.reduce((a, b) => (b.entered > a.entered ? b : a));
+      const entered = new Date(latest.entered);
+      const fresh   = ymdOf(entered) === ymd(0);
+      barEl.innerHTML = `
+        <span class="last-input-dot ${fresh ? 'fresh' : 'stale'}"></span>
+        <span>最終入力：${fresh ? '本日' : mdOf(entered)}</span>`;
+    }
+  }
+
+  const el = document.getElementById('list-' + tabId);
+  if (myData.length === 0) {
+    el.innerHTML = `<div class="empty-state">${catFilter[tabId] ? 'この分類の明細はありません' : '明細がありません'}</div>`;
+    return;
+  }
+
+  el.innerHTML = myData.map(d => `
+    <div class="entry-card" data-id="${esc(d.id)}">
+      <div class="entry-view">
+        <div class="entry-left">
+          <div class="entry-top">
+            <span class="entry-category">${esc(d.category)}</span>
+          </div>
+          <div class="entry-bottom">
+            <span class="entry-date">${mdOfYmd(d.ymd)}</span>
+            ${d.memo ? `<span class="entry-memo">${esc(d.memo)}</span>` : ''}
+          </div>
+        </div>
+        <div class="entry-right">
+          <span class="entry-amount">¥${Number(d.amount).toLocaleString()}</span>
+          <div class="entry-actions">
+            <button class="btn-icon edit" onclick="toggleEdit(this)">✏️</button>
+            <button class="btn-icon del"  onclick="showDelete(this)">🗑</button>
+          </div>
+        </div>
+      </div>
+      <div class="entry-edit">
+        <div class="edit-row">
+          <span class="edit-label">日付</span>
+          <input class="cell-input edit-date" type="date" value="${d.ymd}" max="${ymd(0)}">
+        </div>
+        <div class="edit-row">
+          <span class="edit-label">分類</span>
+          <select class="cell-input edit-cat">
+            ${categoryOptionsFor(d.category)}
+          </select>
+        </div>
+        <div class="edit-row">
+          <span class="edit-label">金額</span>
+          <input class="cell-input num edit-amt" type="number" value="${d.amount}">
+        </div>
+        <div class="edit-row">
+          <span class="edit-label">メモ</span>
+          <input class="cell-input edit-memo" type="text" value="${esc(d.memo)}" placeholder="（任意）">
+        </div>
+        <div class="edit-btns">
+          <button class="btn-cancel" onclick="cancelEdit(this)">取消</button>
+          <button class="btn-save" data-label="保存" onclick="saveEdit(this)">保存</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+/** 編集用の選択肢（旧カテゴリの明細でも今の値が消えないように） */
+function categoryOptionsFor(current) {
+  const list = CATEGORIES.includes(current) ? CATEGORIES : [current, ...CATEGORIES];
+  return list.map(c => `<option${c === current ? ' selected' : ''}>${esc(c)}</option>`).join('');
+}
+
+// ============================================================
+// よく使うメモ（分類ごと・記録者ごとに多い順）
+// ============================================================
+function renderMemoChips() {
+  const recorder = document.getElementById('add-recorder').value === 'Genya'
+    ? RECORDER_MAP.genya : RECORDER_MAP.partner;
+  const cat = document.getElementById('add-cat').value;
+
+  const count = {};
+  allData.forEach(d => {
+    const memo = (d.memo || '').trim();
+    if (!memo || d.category !== cat || d.recorder !== recorder) return;
+    count[memo] = (count[memo] || 0) + 1;
+  });
+  const top = Object.entries(count)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, MEMO_CHIP_COUNT)
+    .map(([m]) => m);
+
+  document.getElementById('memoChips').innerHTML = top.map(m =>
+    `<button type="button" class="memo-chip" onclick="pickMemo(this)">${esc(m)}</button>`
+  ).join('');
+}
+
+function pickMemo(btn) {
+  document.getElementById('add-memo').value = btn.textContent;
+  document.getElementById('add-amt').focus();
+}
+
+// ============================================================
+// 記録状況（昨日の記録漏れ・今日の記録・連続日数）
+// ============================================================
+function loadAllStatus() {
+  Object.values(RECORDER_MAP).forEach(loadStatus);
+}
+
+function loadStatus(recorder) {
+  google.script.run
+    .withSuccessHandler(s => {
+      statusCache[recorder] = s;
+      renderStatus();
+    })
+    .getStatus(recorder);
+}
+
+function renderStatus() {
+  const recorder = RECORDER_MAP[currentTab];
+  const s = statusCache[recorder];
+  const area = document.getElementById('statusArea');
+  if (!s) { area.innerHTML = ''; return; }
+
+  const streak = s.streak > 0 ? `<div class="streak">🔥 ${s.streak}日連続で記録中</div>` : '';
+  const y = new Date(); y.setDate(y.getDate() - 1);
+
+  if (!s.yesterday) {
+    area.innerHTML = `
+      <div class="status-banner missed">
+        <div>⚠️ ${recorder}：昨日（${y.getMonth() + 1}/${y.getDate()}）の記録がありません</div>
+        <div class="status-actions">
+          <button class="primary" onclick="openAdd(-1)">昨日の分を入力</button>
+          <button class="ghost" onclick="noSpend(-1, this)">昨日は支出なし</button>
+        </div>
+      </div>`;
+  } else if (!s.today && new Date().getHours() >= TODAY_REMIND_HOUR) {
+    area.innerHTML = `
+      <div class="status-banner today">
+        <div>📝 ${recorder}：今日の記録がまだです</div>
+        <div class="status-actions">
+          <button class="primary" onclick="openAdd(0)">今日の分を入力</button>
+          <button class="ghost" onclick="noSpend(0, this)">今日は支出なし</button>
+        </div>
+        ${streak}
+      </div>`;
+  } else {
+    area.innerHTML = streak;
+  }
+}
+
+function noSpend(offset, btn) {
+  const recorder = RECORDER_MAP[currentTab];
+  btn.disabled = true;
+  google.script.run
+    .withSuccessHandler(s => {
+      statusCache[recorder] = s;
+      renderStatus();
+      showToast('支出なしで記録しました');
+    })
+    .withFailureHandler(() => {
+      btn.disabled = false;
+      showToast('記録に失敗しました');
+    })
+    .markNoSpend(recorder, ymd(offset));
+}
+
+// ============================================================
+// 編集
+// ============================================================
+function toggleEdit(btn) {
+  btn.closest('.entry-card').classList.toggle('editing');
+}
+function cancelEdit(btn) {
+  btn.closest('.entry-card').classList.remove('editing');
+}
+function saveEdit(btn) {
+  const card = btn.closest('.entry-card');
+  const id   = card.dataset.id;
+  const date = card.querySelector('.edit-date').value;
+  const cat  = card.querySelector('.edit-cat').value;
+  const amt  = card.querySelector('.edit-amt').value;
+  const memo = card.querySelector('.edit-memo').value;
+
+  if (!amt || Number(amt) <= 0) {
+    card.querySelector('.edit-amt').focus();
+    return;
+  }
+  if (!date || date > ymd(0)) {
+    card.querySelector('.edit-date').focus();
+    showToast('日付を確認してください');
+    return;
+  }
+
+  const before = allData.find(d => d.id === id);
+  setLoading(btn, true);
+  google.script.run
+    .withSuccessHandler(res => {
+      applyResponse(res);
+      if (before && before.ymd !== date) loadStatus(before.recorder);
+      showToast('保存しました');
+    })
+    .withFailureHandler(err => {
+      setLoading(btn, false);
+      showToast((err && err.message) || '保存に失敗しました');
+    })
+    .updateEntry({ id: id, date: date, category: cat, amount: amt, memo: memo });
+}
+
+// ============================================================
+// 削除
+// ============================================================
+function showDelete(btn) {
+  const card = btn.closest('.entry-card');
+  pendingDeleteId = card.dataset.id;
+  document.getElementById('d-date').textContent = card.querySelector('.entry-date').textContent;
+  document.getElementById('d-cat').textContent  = card.querySelector('.entry-category').textContent;
+  document.getElementById('d-amt').textContent  = card.querySelector('.entry-amount').textContent;
+  const memo = card.querySelector('.entry-memo');
+  document.getElementById('d-memo').textContent = memo ? memo.textContent : '—';
+  document.getElementById('deleteDialog').style.display = 'flex';
+}
+function closeDelete() {
+  document.getElementById('deleteDialog').style.display = 'none';
+  const btn = document.getElementById('deleteConfirmBtn');
+  btn.disabled = false;
+  btn.textContent = '削除する';
+  pendingDeleteId = null;
+}
+function execDelete() {
+  if (!pendingDeleteId) return;
+  const btn = document.getElementById('deleteConfirmBtn');
+  const target = allData.find(d => d.id === pendingDeleteId);
+  setLoading(btn, true);
+  google.script.run
+    .withSuccessHandler(res => {
+      closeDelete();
+      applyResponse(res);
+      if (target) loadStatus(target.recorder);
+      showToast('削除しました');
+    })
+    .withFailureHandler(err => {
+      setLoading(btn, false);
+      showToast((err && err.message) || '削除に失敗しました');
+    })
+    .deleteEntry(pendingDeleteId);
+}
+
+// ============================================================
+// 新規追加
+// ============================================================
+/** offset: 0=今日, -1=昨日 …（省略時は今日） */
+function openAdd(offset) {
+  const recVal = currentTab === 'genya' ? 'Genya' : 'partner';
+  document.getElementById('add-recorder').value = recVal;
+  document.getElementById('add-amt').value  = '';
+  document.getElementById('add-memo').value = '';
+  setAddDate(typeof offset === 'number' ? offset : 0);
+  renderMemoChips();
+  document.getElementById('addSheet').classList.add('open');
+}
+function closeAdd() {
+  document.getElementById('addSheet').classList.remove('open');
+}
+
+function setAddDate(offset) {
+  const input = document.getElementById('add-date');
+  input.max = ymd(0);
+  input.min = ymd(-31);
+  input.value = ymd(offset);
+  refreshDateUi();
+}
+function refreshDateUi() {
+  const input = document.getElementById('add-date');
+  input.classList.toggle('past', input.value !== ymd(0));
+  document.querySelectorAll('.date-chip').forEach(b => {
+    b.classList.toggle('on', input.value === ymd(Number(b.dataset.offset)));
+  });
+}
+
+function submitAdd() {
+  const recorder = document.getElementById('add-recorder').value;
+  const date     = document.getElementById('add-date').value || ymd(0);
+  const cat      = document.getElementById('add-cat').value;
+  const amt      = document.getElementById('add-amt').value;
+  const memo     = document.getElementById('add-memo').value;
+
+  if (!amt || Number(amt) <= 0) {
+    document.getElementById('add-amt').focus();
+    return;
+  }
+  if (date > ymd(0)) {
+    showToast('未来の日付は指定できません');
+    return;
+  }
+
+  const btn = document.getElementById('addSaveBtn');
+  setLoading(btn, true);
+
+  const recorderVal = recorder === 'Genya' ? RECORDER_MAP.genya : RECORDER_MAP.partner;
+  const isPast = date !== ymd(0);
+
+  google.script.run
+    .withSuccessHandler(res => {
+      applyResponse(res);
+      setLoading(btn, false);
+      loadStatus(recorderVal);
+      if (isPast) {
+        // 過去日の入力中はシートを開いたまま（続けて入力できる）
+        document.getElementById('add-amt').value  = '';
+        document.getElementById('add-memo').value = '';
+        renderMemoChips();
+        showToast(`追加しました（${mdOfYmd(date)}）続けて入力できます`);
+      } else {
+        closeAdd();
+        showToast('追加しました');
+      }
+    })
+    .withFailureHandler(err => {
+      setLoading(btn, false);
+      showToast((err && err.message) || '追加に失敗しました');
+    })
+    .addEntry({ recorder: recorderVal, date: date, category: cat, amount: amt, memo: memo });
+}
+
+// 記録者を切り替えたらメモ候補も切り替え
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('add-recorder').addEventListener('change', renderMemoChips);
+});
+
+// ============================================================
+// タブ
+// ============================================================
+/** 分類をタップ → その分類だけ表示。もう一度タップで解除 */
+function toggleCatFilter(tabId, cat) {
+  catFilter[tabId] = (cat && catFilter[tabId] !== cat) ? cat : null;
+  render();
+}
+
+function switchTab(id, btn) {
+  currentTab = id;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('panel-' + id).classList.add('active');
+  renderStatus();
+}
+
+// ============================================================
+// ユーティリティ
+// ============================================================
+function pad(n) { return String(n).padStart(2, '0'); }
+
+/** 端末の日付で yyyy-MM-dd（offset 日ずらす） */
+function ymd(offset) {
+  const d = new Date();
+  d.setDate(d.getDate() + (offset || 0));
+  return ymdOf(d);
+}
+function ymdOf(d)    { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+function mdOf(d)     { return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}`; }
+function mdOfYmd(s)  { const [, m, d] = String(s).split('-'); return `${m}/${d}`; }
+
+/** HTMLエスケープ（メモに " や < が入っても崩れないように） */
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function showLoading(show) {
+  document.getElementById('loadingScreen').classList.toggle('hidden', !show);
+}
+
+function setLoading(btn, isLoading) {
+  btn.disabled    = isLoading;
+  btn.textContent = isLoading ? '…' : (btn.dataset.label || btn.textContent);
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+</script>
+</body>
+</html>
