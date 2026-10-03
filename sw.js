@@ -1,7 +1,7 @@
 // 支出記録 Service Worker
 // 画面ファイルを端末に保存しておき、起動を速くする（データはいつもサーバーから取る）。
 // 画面を更新したら、下の VERSION の数字を1つ上げてください。
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE = 'shishutsu-' + VERSION;
 const FILES = ['./', 'index.html', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
