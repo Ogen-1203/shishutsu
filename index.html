@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>支出記録</title>
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://script.google.com">
+<link rel="preconnect" href="https://script.googleusercontent.com">
 <meta name="theme-color" content="#FFFFFF">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -106,17 +108,32 @@
   /* タブ */
   .tab-bar {
     background: var(--surface); border-bottom: 1px solid var(--border);
-    display: flex; padding: 0 16px;
+    display: flex; padding: 0 16px; position: relative;
   }
   .tab-btn {
-    flex: 1; background: none; border: none; border-bottom: 2px solid transparent;
-    padding: 12px 0; font-size: 14px; font-weight: 600; color: var(--text-muted);
-    cursor: pointer; transition: color 0.15s, border-color 0.15s;
+    flex: 1; background: none; border: none;
+    padding: 12px 0 14px; font-size: 14px; font-weight: 600; color: var(--text-muted);
+    cursor: pointer; transition: color 0.2s;
   }
-  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-btn.active { color: var(--accent); }
+  /* タブの下線（指の動きに合わせて左右に動く） */
+  .tab-ink {
+    position: absolute; left: 16px; bottom: -1px; height: 2px;
+    width: calc(50% - 16px); background: var(--accent); border-radius: 2px;
+    will-change: transform;
+  }
 
-  .tab-panel { display: none; }
-  .tab-panel.active { display: block; }
+  /* ★スワイプで切り替える横並びの画面（Genya | Erika） */
+  .pager { overflow: hidden; touch-action: pan-y; }
+  .pager-track { display: flex; width: 200%; will-change: transform; }
+  .pager-track > .tab-panel { flex: 0 0 50%; width: 50%; min-width: 0; }
+  /* 止まっている間は、見えていない側の高さを0にして余白を出さない */
+  .pager:not(.moving) .tab-panel:not(.active) { height: 0; overflow: hidden; visibility: hidden; }
+  .anim-slide { transition: transform 0.36s cubic-bezier(0.22, 0.61, 0.36, 1); }
+
+  /* 送信中の明細（サーバーの返事を待っている間） */
+  .entry-card.pending { opacity: 0.55; }
+  .entry-card.pending .entry-actions { visibility: hidden; }
 
   /* ★追加：記録状況バナー */
   .status-area { padding: 12px 16px 0; }
@@ -340,11 +357,6 @@
   .ptr.ready .ptr-spin { border-color: var(--accent); border-top-color: var(--border); }
   .ptr.loading .ptr-spin { animation: spin 0.7s linear infinite; }
 
-  /* ★追加：スワイプでタブ切り替え時のアニメーション */
-  @keyframes slide-from-right { from { transform: translateX(40px); opacity: 0; } to { transform: none; opacity: 1; } }
-  @keyframes slide-from-left  { from { transform: translateX(-40px); opacity: 0; } to { transform: none; opacity: 1; } }
-  .tab-panel.from-right { animation: slide-from-right 0.22s ease-out; }
-  .tab-panel.from-left  { animation: slide-from-left 0.22s ease-out; }
 </style>
 </head>
 <body>
@@ -381,12 +393,14 @@
 <div class="tab-bar">
   <button class="tab-btn active" onclick="switchTab('genya', this)">Genya</button>
   <button class="tab-btn"        onclick="switchTab('partner', this)">Erika</button>
+  <div class="tab-ink" id="tabInk"></div>
 </div>
 </div><!-- /app-header -->
 
 <!-- ★追加：記録状況（昨日の記録漏れ・連続記録） -->
 <div class="status-area" id="statusArea"></div>
 
+<div class="pager" id="pager"><div class="pager-track" id="pagerTrack">
 <div class="tab-panel active" id="panel-genya">
   <div class="section">
     <div style="height:14px"></div>
@@ -422,6 +436,7 @@
     <div id="list-partner"></div>
   </div>
 </div>
+</div></div><!-- /pager -->
 
 <button class="fab" onclick="openAdd()">＋</button>
 
@@ -591,29 +606,56 @@ window.addEventListener('DOMContentLoaded', () => {
   loadData();
 });
 
+// 前回のデータを端末に保存しておき、起動したらまずそれを表示 → 裏で最新に更新
+const CACHE_KEY = 'shishutsu-data-v1';
+
 function loadData() {
-  showLoading(true);
+  let cached = null;
+  try { cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch (e) {}
+  if (cached) {
+    applyResponse(cached, true);   // すぐ表示
+    showLoading(false);
+    setSyncing(true);              // 上に小さく「更新中」の印
+  } else {
+    showLoading(true);             // 初回だけ読み込み画面
+  }
   google.script.run
     .withSuccessHandler(res => {
       applyResponse(res);
       showLoading(false);
+      setSyncing(false);
     })
     .withFailureHandler(() => {
-      showToast('読み込みに失敗しました');
+      showToast(cached ? '最新の情報を取得できませんでした' : '読み込みに失敗しました');
       showLoading(false);
+      setSyncing(false);
     })
     .getData();
-  loadAllStatus();
 }
 
-/** サーバーから返った {categories, entries} を反映 */
-function applyResponse(res) {
+/** サーバーから返った {categories, entries, status} を反映 */
+function applyResponse(res, fromCache) {
+  if (!res) return;
   if (res.categories && res.categories.length) {
     CATEGORIES = res.categories;
     renderCategoryOptions();
   }
   allData = res.entries || [];
+  if (res.status) { statusCache = res.status; renderStatus(); }
   render();
+  if (!fromCache) {
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify(res)); } catch (e) {}
+  }
+}
+
+/** 裏で更新中のとき、画面上部に回る印を出す */
+function setSyncing(on) {
+  const el = document.getElementById('ptr');
+  if (!el || el.dataset.pulling === '1') return;
+  el.classList.add('anim');
+  el.classList.toggle('loading', on);
+  el.style.transform = on ? 'translateY(10px)' : 'translateY(-70px)';
+  el.style.opacity = on ? '1' : '0';
 }
 
 function renderCategoryOptions() {
@@ -732,7 +774,7 @@ function renderList(tabId, data) {
   }
 
   el.innerHTML = myData.map(d => `
-    <div class="entry-card" data-id="${esc(d.id)}">
+    <div class="entry-card${d.pending ? ' pending' : ''}" data-id="${esc(d.id)}">
       <div class="entry-view">
         <div class="entry-left">
           <span class="entry-date">${mdOfYmd(d.ymd)}</span>
@@ -813,18 +855,7 @@ function pickMemo(btn) {
 // ============================================================
 // 記録状況（昨日の記録漏れ・今日の記録・連続日数）
 // ============================================================
-function loadAllStatus() {
-  Object.values(RECORDER_MAP).forEach(loadStatus);
-}
-
-function loadStatus(recorder) {
-  google.script.run
-    .withSuccessHandler(s => {
-      statusCache[recorder] = s;
-      renderStatus();
-    })
-    .getStatus(recorder);
-}
+// 記録状況は getData などの返事にまとめて入っている（res.status）ので、個別の通信はしない
 
 function renderStatus() {
   const recorder = RECORDER_MAP[currentTab];
@@ -863,9 +894,8 @@ function noSpend(offset, btn) {
   const recorder = RECORDER_MAP[currentTab];
   btn.disabled = true;
   google.script.run
-    .withSuccessHandler(s => {
-      statusCache[recorder] = s;
-      renderStatus();
+    .withSuccessHandler(res => {
+      applyResponse(res);
       showToast('支出なしで記録しました');
     })
     .withFailureHandler(() => {
@@ -902,12 +932,10 @@ function saveEdit(btn) {
     return;
   }
 
-  const before = allData.find(d => d.id === id);
   setLoading(btn, true);
   google.script.run
     .withSuccessHandler(res => {
       applyResponse(res);
-      if (before && before.ymd !== date) loadStatus(before.recorder);
       showToast('保存しました');
     })
     .withFailureHandler(err => {
@@ -939,21 +967,21 @@ function closeDelete() {
 }
 function execDelete() {
   if (!pendingDeleteId) return;
-  const btn = document.getElementById('deleteConfirmBtn');
-  const target = allData.find(d => d.id === pendingDeleteId);
-  setLoading(btn, true);
+  const id = pendingDeleteId;
+  const idx = allData.findIndex(d => d.id === id);
+  const target = allData[idx];
+  // 先に画面から消して、すぐ閉じる（通信は裏で）
+  if (idx >= 0) allData.splice(idx, 1);
+  closeDelete();
+  render();
+  showToast('削除しました');
   google.script.run
-    .withSuccessHandler(res => {
-      closeDelete();
-      applyResponse(res);
-      if (target) loadStatus(target.recorder);
-      showToast('削除しました');
-    })
+    .withSuccessHandler(res => applyResponse(res))
     .withFailureHandler(err => {
-      setLoading(btn, false);
-      showToast((err && err.message) || '削除に失敗しました');
+      if (target) { allData.push(target); render(); }
+      showToast((err && err.message) || '削除に失敗しました（元に戻しました）');
     })
-    .deleteEntry(pendingDeleteId);
+    .deleteEntry(id);
 }
 
 // ============================================================
@@ -1004,31 +1032,36 @@ function submitAdd() {
     return;
   }
 
-  const btn = document.getElementById('addSaveBtn');
-  setLoading(btn, true);
-
   const recorderVal = recorder === 'Genya' ? RECORDER_MAP.genya : RECORDER_MAP.partner;
   const isPast = date !== ymd(0);
 
+  // 先に画面に出して、すぐ閉じる（通信は裏で。終わるまで薄く表示）
+  const tempId = 'tmp-' + Date.now();
+  allData.push({ id: tempId, order: 1e9 + Date.now(), ymd: date, recorder: recorderVal,
+                 category: cat, amount: Number(amt), memo: memo, entered: Date.now(), pending: true });
+  render();
+  if (isPast) {
+    // 過去日の入力中はシートを開いたまま（続けて入力できる）
+    document.getElementById('add-amt').value  = '';
+    document.getElementById('add-memo').value = '';
+    renderMemoChips();
+    showToast(`追加しました（${mdOfYmd(date)}）続けて入力できます`);
+  } else {
+    closeAdd();
+    showToast('追加しました');
+  }
+
   google.script.run
     .withSuccessHandler(res => {
+      // 返事を待つ間に追加した別の明細（まだ送信中のもの）は残す
+      const stillPending = allData.filter(d => d.pending && d.id !== tempId);
       applyResponse(res);
-      setLoading(btn, false);
-      loadStatus(recorderVal);
-      if (isPast) {
-        // 過去日の入力中はシートを開いたまま（続けて入力できる）
-        document.getElementById('add-amt').value  = '';
-        document.getElementById('add-memo').value = '';
-        renderMemoChips();
-        showToast(`追加しました（${mdOfYmd(date)}）続けて入力できます`);
-      } else {
-        closeAdd();
-        showToast('追加しました');
-      }
+      if (stillPending.length) { allData = allData.concat(stillPending); render(); }
     })
     .withFailureHandler(err => {
-      setLoading(btn, false);
-      showToast((err && err.message) || '追加に失敗しました');
+      allData = allData.filter(d => d.id !== tempId);
+      render();
+      showToast((err && err.message) || '追加に失敗しました。もう一度入力してください');
     })
     .addEntry({ recorder: recorderVal, date: date, category: cat, amount: amt, memo: memo });
 }
@@ -1047,18 +1080,44 @@ function toggleCatFilter(tabId, cat) {
   render();
 }
 
-function switchTab(id, btn) {
-  if (id === currentTab) return;
-  const panel = document.getElementById('panel-' + id);
-  panel.classList.remove('from-right', 'from-left');
-  void panel.offsetWidth; // アニメーションを毎回やり直すため
-  panel.classList.add(id === 'partner' ? 'from-right' : 'from-left');
-  currentTab = id;
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById('panel-' + id).classList.add('active');
-  renderStatus();
+// ---- 横並び画面（0 = Genya, 1 = Erika） ----
+const TAB_IDS = ['genya', 'partner'];
+let slideTimer = null;
+
+/** p = 0（Genya）〜 1（Erika）の位置に画面と下線を動かす */
+function setPagerPos(p, animate) {
+  const track = document.getElementById('pagerTrack');
+  const ink   = document.getElementById('tabInk');
+  track.classList.toggle('anim-slide', !!animate);
+  ink.classList.toggle('anim-slide', !!animate);
+  track.style.transform = `translate3d(${-p * 50}%, 0, 0)`;
+  ink.style.transform   = `translate3d(${p * 100}%, 0, 0)`;
+}
+
+/** タブの文字色（近い方を強調） */
+function setTabLabel(i) {
+  document.querySelectorAll('.tab-btn').forEach((b, k) => b.classList.toggle('active', k === i));
+}
+
+/** i 番目のタブへ、スーッと動かして切り替える */
+function goToTab(i) {
+  const pager = document.getElementById('pager');
+  pager.classList.add('moving');
+  setTabLabel(i);
+  // 次の描画で動かす（見えていなかった側を表示してからアニメーション）
+  requestAnimationFrame(() => setPagerPos(i, true));
+  clearTimeout(slideTimer);
+  slideTimer = setTimeout(() => {
+    pager.classList.remove('moving');
+    document.getElementById('pagerTrack').classList.remove('anim-slide');
+    currentTab = TAB_IDS[i];
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + currentTab));
+    renderStatus();
+  }, 380);
+}
+
+function switchTab(id) {
+  goToTab(TAB_IDS.indexOf(id));
 }
 
 // ============================================================
@@ -1099,29 +1158,62 @@ document.addEventListener('gesturestart', e => e.preventDefault());
 // 左右スワイプでタブ切り替え（Genya ←→ Erika）
 // ============================================================
 (function setupSwipeTabs() {
-  let sx = null, sy = 0;
+  const pager = document.getElementById('pager');
+  let sx = null, sy = 0, st = 0, lock = null, dx = 0, width = 1, from = 0, raf = 0;
+
   const blocked = (target) =>
     document.getElementById('addSheet').classList.contains('open') ||
     document.getElementById('deleteDialog').style.display === 'flex' ||
     !!document.querySelector('.entry-card.editing') ||
-    !!(target.closest && target.closest('input, select, textarea, .month-nav'));
+    !!(target.closest && target.closest('input, select, textarea'));
 
-  document.addEventListener('touchstart', e => {
+  pager.addEventListener('touchstart', e => {
     if (e.touches.length !== 1 || blocked(e.target)) { sx = null; return; }
-    sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now();
+    lock = null; dx = 0; width = pager.clientWidth || 1;
+    from = TAB_IDS.indexOf(currentTab);
   }, { passive: true });
 
-  document.addEventListener('touchend', e => {
+  pager.addEventListener('touchmove', e => {
     if (sx === null) return;
-    const t = e.changedTouches[0];
-    const dx = t.clientX - sx, dy = t.clientY - sy;
+    dx = e.touches[0].clientX - sx;
+    const dy = e.touches[0].clientY - sy;
+    if (lock === null) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      // 先に横に動いたら「スワイプ」、縦なら「スクロール」として扱う
+      lock = (Math.abs(dx) > Math.abs(dy) && !window.__pulling) ? 'h' : 'v';
+      if (lock === 'h') {
+        window.__swiping = true;
+        clearTimeout(slideTimer);
+        pager.classList.add('moving');
+      }
+    }
+    if (lock !== 'h') return;
+    e.preventDefault(); // 横に動かしている間は縦にスクロールさせない
+    let p = from - dx / width;
+    if (p < 0) p *= 0.25;                 // 端では少しだけ動く（ゴムのような抵抗）
+    if (p > 1) p = 1 + (p - 1) * 0.25;
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      setPagerPos(p, false);
+      setTabLabel(p > 0.5 ? 1 : 0);
+    });
+  }, { passive: false });
+
+  const end = () => {
+    if (sx === null) return;
     sx = null;
-    // 横に60px以上、かつ縦より十分大きく動いたときだけ（縦スクロールと区別）
-    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
-    const btns = document.querySelectorAll('.tab-btn');
-    if (dx < 0 && currentTab === 'genya')   switchTab('partner', btns[1]); // 左スワイプ → Erika
-    if (dx > 0 && currentTab === 'partner') switchTab('genya', btns[0]);   // 右スワイプ → Genya
-  }, { passive: true });
+    if (lock !== 'h') return;
+    window.__swiping = false;
+    cancelAnimationFrame(raf);
+    const v = dx / Math.max(1, Date.now() - st);   // 指の速さ（px/ms）
+    let to = from;
+    if (dx < -width * 0.25 || v < -0.35) to = Math.min(1, from + 1);  // 左へ → Erika
+    if (dx >  width * 0.25 || v >  0.35) to = Math.max(0, from - 1);  // 右へ → Genya
+    goToTab(to);
+  };
+  pager.addEventListener('touchend', end);
+  pager.addEventListener('touchcancel', end);
 })();
 
 // ============================================================
@@ -1152,8 +1244,10 @@ document.addEventListener('gesturestart', e => e.preventDefault());
 
   document.addEventListener('touchmove', e => {
     if (startY === null) return;
+    if (window.__swiping) { startY = null; dist = 0; window.__pulling = false; el.dataset.pulling = ''; hide(); return; }
     const d = e.touches[0].clientY - startY;
-    if (d <= 0 || window.scrollY > 0) { dist = 0; place(-70); return; }
+    if (d <= 0 || window.scrollY > 0) { dist = 0; window.__pulling = false; place(-70); return; }
+    window.__pulling = true; el.dataset.pulling = '1';
     dist = Math.min(d * 0.5, 110);          // 指の半分の速さでついてくる
     el.classList.remove('anim');
     el.classList.toggle('ready', dist >= TRIGGER);
@@ -1161,6 +1255,7 @@ document.addEventListener('gesturestart', e => e.preventDefault());
   }, { passive: true });
 
   document.addEventListener('touchend', () => {
+    window.__pulling = false; el.dataset.pulling = '';
     if (startY === null) return;
     startY = null;
     if (dist >= TRIGGER) refresh(); else hide();
@@ -1177,7 +1272,6 @@ document.addEventListener('gesturestart', e => e.preventDefault());
       .withSuccessHandler(res => { applyResponse(res); done('更新しました'); })
       .withFailureHandler(() => done('更新に失敗しました'))
       .getData();
-    loadAllStatus();
   }
 })();
 
