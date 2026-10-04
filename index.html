@@ -69,9 +69,8 @@
     background: var(--surface); border-bottom: 1px solid var(--border);
     padding: 14px 16px;
     padding-top: calc(14px + env(safe-area-inset-top)); /* iPhoneのノッチ対策 */
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex; align-items: center; justify-content: flex-end;
   }
-  .header-title { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
   .month-nav { display: flex; align-items: center; gap: 6px; }
   .month-nav button {
     background: none; border: none; padding: 0;
@@ -134,7 +133,8 @@
 
   /* ★追加：記録状況バナー */
   /* ヘッダーより下の本文（ここだけ薄いベージュ） */
-  .content { background: var(--bg); min-height: 100vh; }
+  /* 下まで行って引っ張ったときも境目が出ないよう、本文の色を下へ延ばす（影なのでスクロール量は増えない） */
+  .content { background: var(--bg); min-height: 100vh; box-shadow: 0 50vh 0 50vh var(--bg); }
   .status-area { padding: 12px 16px 0; }
   .status-area:empty { display: none; }
   .status-banner {
@@ -244,7 +244,8 @@
     padding-right: 28px; cursor: pointer;
   }
   /* ★追加：日付入力 */
-  input[type=date].cell-input { -webkit-appearance: none; appearance: none; min-height: 36px; }
+  input[type=date].cell-input { -webkit-appearance: none; appearance: none; min-height: 36px; text-align: left; display: block; }
+  input[type=date].cell-input::-webkit-date-and-time-value { text-align: left; margin: 0; }
   .cell-input.past { background: var(--warn-light); border-color: var(--warn); }
   .date-chips { display: flex; gap: 6px; padding-left: 48px; margin-top: -4px; }
   .date-chip {
@@ -257,9 +258,16 @@
   .memo-chips { display: flex; gap: 6px; flex-wrap: wrap; padding-left: 48px; margin-top: -4px; }
   .memo-chips:empty { display: none; }
   .memo-chip {
-    background: var(--bg); border: 1px solid var(--border); border-radius: 14px;
-    padding: 5px 10px; font-size: 12px; color: var(--text-secondary); cursor: pointer;
-    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    display: inline-flex; align-items: center; max-width: 100%;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
+  }
+  .memo-chip-pick {
+    background: none; border: none; padding: 5px 4px 5px 10px; font-size: 12px; color: var(--text-secondary);
+    cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: inherit;
+  }
+  .memo-chip-x {
+    background: none; border: none; padding: 5px 9px 5px 4px; font-size: 13px; line-height: 1;
+    color: var(--text-muted); cursor: pointer; flex-shrink: 0;
   }
 
   .edit-btns { display: flex; gap: 8px; }
@@ -367,7 +375,6 @@
 
 <div class="app-header">
 <header>
-  <div class="header-title">支出記録</div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
     <span class="month-label" id="monthLabel"></span>
@@ -468,7 +475,7 @@
     </div>
     <div class="edit-row">
       <span class="edit-label">金額</span>
-      <input class="cell-input num" type="number" id="add-amt" placeholder="0">
+      <input class="cell-input num" type="text" inputmode="numeric" pattern="[0-9]*" id="add-amt" placeholder="0" oninput="onlyDigits(this)">
     </div>
     <div class="edit-row">
       <span class="edit-label">メモ</span>
@@ -792,7 +799,7 @@ function renderList(tabId, data) {
         </div>
         <div class="edit-row">
           <span class="edit-label">金額</span>
-          <input class="cell-input num edit-amt" type="number" value="${d.amount}">
+          <input class="cell-input num edit-amt" type="text" inputmode="numeric" pattern="[0-9]*" value="${d.amount}" oninput="onlyDigits(this)">
         </div>
         <div class="edit-row">
           <span class="edit-label">メモ</span>
@@ -827,14 +834,42 @@ function renderMemoChips() {
     if (!memo || d.category !== cat || d.recorder !== recorder) return;
     count[memo] = (count[memo] || 0) + 1;
   });
+  const hidden = getHiddenMemos();
   const top = Object.entries(count)
+    .filter(([m]) => !hidden.includes(hiddenKey(recorder, cat, m)))
     .sort((a, b) => b[1] - a[1])
     .slice(0, MEMO_CHIP_COUNT)
     .map(([m]) => m);
 
-  document.getElementById('memoChips').innerHTML = top.map(m =>
-    `<button type="button" class="memo-chip" onclick="pickMemo(this)">${esc(m)}</button>`
+  memoChipValues = top;
+  document.getElementById('memoChips').innerHTML = top.map((m, i) =>
+    `<span class="memo-chip"><button type="button" class="memo-chip-pick" onclick="pickMemo(this)">${esc(m)}</button>` +
+    `<button type="button" class="memo-chip-x" aria-label="この候補を消す" onclick="hideMemo(${i})">×</button></span>`
   ).join('');
+}
+
+// ×で消した候補（この端末に保存。明細のメモ自体は消えない）
+let memoChipValues = [];
+const HIDDEN_MEMO_KEY = 'shishutsu-hidden-memos';
+const hiddenKey = (recorder, cat, memo) => recorder + '|' + cat + '|' + memo;
+function getHiddenMemos() {
+  try { return JSON.parse(localStorage.getItem(HIDDEN_MEMO_KEY) || '[]'); } catch (e) { return []; }
+}
+function hideMemo(i) {
+  const memo = memoChipValues[i];
+  if (memo == null) return;
+  const recorder = document.getElementById('add-recorder').value === 'Genya' ? RECORDER_MAP.genya : RECORDER_MAP.partner;
+  const cat = document.getElementById('add-cat').value;
+  const list = getHiddenMemos();
+  list.push(hiddenKey(recorder, cat, memo));
+  try { localStorage.setItem(HIDDEN_MEMO_KEY, JSON.stringify(list)); } catch (e) {}
+  renderMemoChips();
+}
+
+/** 金額欄：数字以外（カンマなど）は取り除く */
+function onlyDigits(el) {
+  const v = el.value.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/\D/g, '');
+  if (v !== el.value) el.value = v;
 }
 
 function pickMemo(btn) {
