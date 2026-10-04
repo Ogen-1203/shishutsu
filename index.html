@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>支出記録</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#FFFFFF">
@@ -30,7 +30,10 @@
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { overflow-x: hidden; max-width: 100vw; }
+  /* overflow-x は clip（hidden だと固定ヘッダーが効かなくなるため） */
+  html, body { overflow-x: clip; max-width: 100vw; }
+  /* 2本指の拡大・ダブルタップ拡大をしない */
+  html { touch-action: pan-x pan-y; }
 
   body {
     background: var(--bg);
@@ -56,9 +59,11 @@
   .loading-text { font-size: 13px; color: var(--text-muted); }
 
   /* ヘッダー */
+  /* 固定ヘッダー（タイトル〜Genya/Erikaタブ） */
+  .app-header { position: sticky; top: 0; z-index: 100; }
   header {
     background: var(--surface); border-bottom: 1px solid var(--border);
-    padding: 14px 16px; position: sticky; top: 0; z-index: 100;
+    padding: 14px 16px;
     padding-top: calc(14px + env(safe-area-inset-top)); /* iPhoneのノッチ対策 */
     display: flex; align-items: center; justify-content: space-between;
   }
@@ -183,12 +188,11 @@
     border-radius: 10px; margin-bottom: 8px; overflow: hidden;
   }
   .entry-view { display: flex; align-items: center; padding: 12px; gap: 10px; }
-  .entry-left { flex: 1; min-width: 0; }
-  .entry-top  { display: flex; align-items: center; gap: 7px; margin-bottom: 3px; }
-  .entry-category { font-size: 14px; font-weight: 600; }
-  .entry-bottom { display: flex; align-items: center; gap: 8px; }
-  .entry-date  { font-family: var(--font-num); font-size: 11px; color: var(--text-muted); }
-  .entry-memo  { font-size: 11px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 明細は1行：日付 大分類 小分類 */
+  .entry-left { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+  .entry-date  { font-family: var(--font-num); font-size: 12px; color: var(--text-muted); flex-shrink: 0; }
+  .entry-category { font-size: 14px; font-weight: 600; flex-shrink: 0; }
+  .entry-memo  { font-size: 13px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .entry-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
   .entry-amount { font-family: var(--font-num); font-size: 16px; font-weight: 700; letter-spacing: -0.5px; }
   .entry-actions { display: flex; gap: 5px; }
@@ -213,7 +217,7 @@
   .edit-label { font-size: 11px; color: var(--text-muted); width: 40px; flex-shrink: 0; }
   .cell-input {
     flex: 1; border: 1px solid var(--accent); border-radius: 6px;
-    padding: 7px 10px; font-size: 14px; font-family: inherit;
+    padding: 7px 10px; font-size: 16px; font-family: inherit; /* 16px未満だとiPhoneが入力時にズームする */
     background: #fff; outline: none; min-width: 0;
   }
   .cell-input.num { font-family: var(--font-num); text-align: right; }
@@ -335,6 +339,12 @@
   }
   .ptr.ready .ptr-spin { border-color: var(--accent); border-top-color: var(--border); }
   .ptr.loading .ptr-spin { animation: spin 0.7s linear infinite; }
+
+  /* ★追加：スワイプでタブ切り替え時のアニメーション */
+  @keyframes slide-from-right { from { transform: translateX(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+  @keyframes slide-from-left  { from { transform: translateX(-40px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .tab-panel.from-right { animation: slide-from-right 0.22s ease-out; }
+  .tab-panel.from-left  { animation: slide-from-left 0.22s ease-out; }
 </style>
 </head>
 <body>
@@ -344,6 +354,7 @@
   <div class="loading-text">読み込み中...</div>
 </div>
 
+<div class="app-header">
 <header>
   <div class="header-title">家計簿</div>
   <div class="month-nav">
@@ -371,6 +382,7 @@
   <button class="tab-btn active" onclick="switchTab('genya', this)">Genya</button>
   <button class="tab-btn"        onclick="switchTab('partner', this)">Erika</button>
 </div>
+</div><!-- /app-header -->
 
 <!-- ★追加：記録状況（昨日の記録漏れ・連続記録） -->
 <div class="status-area" id="statusArea"></div>
@@ -723,13 +735,9 @@ function renderList(tabId, data) {
     <div class="entry-card" data-id="${esc(d.id)}">
       <div class="entry-view">
         <div class="entry-left">
-          <div class="entry-top">
-            <span class="entry-category">${esc(d.category)}</span>
-          </div>
-          <div class="entry-bottom">
-            <span class="entry-date">${mdOfYmd(d.ymd)}</span>
-            ${d.memo ? `<span class="entry-memo">${esc(d.memo)}</span>` : ''}
-          </div>
+          <span class="entry-date">${mdOfYmd(d.ymd)}</span>
+          <span class="entry-category">${esc(d.category)}</span>
+          ${d.memo ? `<span class="entry-memo">${esc(d.memo)}</span>` : ''}
         </div>
         <div class="entry-right">
           <span class="entry-amount">¥${Number(d.amount).toLocaleString()}</span>
@@ -1040,6 +1048,11 @@ function toggleCatFilter(tabId, cat) {
 }
 
 function switchTab(id, btn) {
+  if (id === currentTab) return;
+  const panel = document.getElementById('panel-' + id);
+  panel.classList.remove('from-right', 'from-left');
+  void panel.offsetWidth; // アニメーションを毎回やり直すため
+  panel.classList.add(id === 'partner' ? 'from-right' : 'from-left');
   currentTab = id;
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
@@ -1078,6 +1091,38 @@ function setLoading(btn, isLoading) {
   btn.disabled    = isLoading;
   btn.textContent = isLoading ? '…' : (btn.dataset.label || btn.textContent);
 }
+
+// iPhoneの2本指拡大を止める
+document.addEventListener('gesturestart', e => e.preventDefault());
+
+// ============================================================
+// 左右スワイプでタブ切り替え（Genya ←→ Erika）
+// ============================================================
+(function setupSwipeTabs() {
+  let sx = null, sy = 0;
+  const blocked = (target) =>
+    document.getElementById('addSheet').classList.contains('open') ||
+    document.getElementById('deleteDialog').style.display === 'flex' ||
+    !!document.querySelector('.entry-card.editing') ||
+    !!(target.closest && target.closest('input, select, textarea, .month-nav'));
+
+  document.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1 || blocked(e.target)) { sx = null; return; }
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+  }, { passive: true });
+
+  document.addEventListener('touchend', e => {
+    if (sx === null) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - sx, dy = t.clientY - sy;
+    sx = null;
+    // 横に60px以上、かつ縦より十分大きく動いたときだけ（縦スクロールと区別）
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    const btns = document.querySelectorAll('.tab-btn');
+    if (dx < 0 && currentTab === 'genya')   switchTab('partner', btns[1]); // 左スワイプ → Erika
+    if (dx > 0 && currentTab === 'partner') switchTab('genya', btns[0]);   // 右スワイプ → Genya
+  }, { passive: true });
+})();
 
 // ============================================================
 // 引っ張って更新（画面のいちばん上で下に引っ張って離すと再読み込み）
