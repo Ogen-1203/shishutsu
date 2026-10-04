@@ -37,8 +37,10 @@
   /* 2本指の拡大・ダブルタップ拡大をしない */
   html { touch-action: pan-x pan-y; }
 
+  /* 引っ張ったときに見える外側の色は、ヘッダーと同じ白にする */
+  html { background: var(--surface); }
   body {
-    background: var(--bg);
+    background: var(--surface);
     color: var(--text-primary);
     font-family: -apple-system, 'Hiragino Sans', sans-serif;
     font-size: 14px;
@@ -72,38 +74,29 @@
   .header-title { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
   .month-nav { display: flex; align-items: center; gap: 6px; }
   .month-nav button {
-    background: none; border: 1px solid var(--border); border-radius: 6px;
+    background: none; border: none; padding: 0;
     width: 30px; height: 30px; cursor: pointer; color: var(--text-secondary);
-    font-size: 16px; display: flex; align-items: center; justify-content: center;
+    font-size: 20px; display: flex; align-items: center; justify-content: center;
+    -webkit-tap-highlight-color: transparent;
   }
-  .month-label { font-size: 14px; font-weight: 600; min-width: 72px; text-align: center; }
+  .month-nav button:active { opacity: 0.4; }
+  /* 「2026年9月」「2026年10月」で幅が変わらないよう固定 */
+  .month-label {
+    font-size: 14px; font-weight: 600; text-align: center;
+    width: 6.6em; flex: 0 0 auto; white-space: nowrap; font-variant-numeric: tabular-nums;
+  }
 
   /* サマリー */
   .summary-bar {
-    background: var(--accent); padding: 16px;
+    background: var(--accent); padding: 12px 16px;
     display: grid; grid-template-columns: 1fr 1px 1fr; align-items: center;
   }
-  .summary-divider { background: rgba(255,255,255,0.25); height: 40px; width: 1px; justify-self: center; }
+  .summary-divider { background: rgba(255,255,255,0.25); height: 34px; width: 1px; justify-self: center; }
   .summary-item { display: flex; flex-direction: column; gap: 4px; padding: 0 16px; }
   .summary-item:first-child { padding-left: 0; }
   .summary-item:last-child  { padding-right: 0; }
-  .summary-label { font-size: 10px; color: rgba(255,255,255,0.65); letter-spacing: 0.4px; }
   .summary-name  { font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.85); margin-bottom: 1px; }
   .summary-value { font-family: var(--font-num); font-weight: 700; color: #fff; letter-spacing: -0.5px; font-size: 26px; }
-
-  /* 王冠 */
-  .crown {
-    font-size: 12px; margin-left: 3px;
-    display: inline-block;
-    vertical-align: bottom;
-    line-height: 1;
-    animation: crown-pop 0.4s cubic-bezier(.4,0,.2,1);
-  }
-  @keyframes crown-pop {
-    0%   { transform: scale(0.4) rotate(-20deg); opacity: 0; }
-    70%  { transform: scale(1.25) rotate(5deg); }
-    100% { transform: scale(1) rotate(0deg); opacity: 1; }
-  }
 
   /* タブ */
   .tab-bar {
@@ -140,6 +133,8 @@
   .entry-card.pending .entry-actions { visibility: hidden; }
 
   /* ★追加：記録状況バナー */
+  /* ヘッダーより下の本文（ここだけ薄いベージュ） */
+  .content { background: var(--bg); min-height: 100vh; }
   .status-area { padding: 12px 16px 0; }
   .status-area:empty { display: none; }
   .status-banner {
@@ -372,7 +367,7 @@
 
 <div class="app-header">
 <header>
-  <div class="header-title">家計簿</div>
+  <div class="header-title">支出記録</div>
   <div class="month-nav">
     <button onclick="changeMonth(-1)">‹</button>
     <span class="month-label" id="monthLabel"></span>
@@ -382,14 +377,12 @@
 
 <div class="summary-bar">
   <div class="summary-item">
-    <span class="summary-label">今月の支出</span>
-    <span class="summary-name">Genya<span class="crown" id="crownGenya" style="display:none">👑</span></span>
+    <span class="summary-name">Genya</span>
     <span class="summary-value" id="totalGenya">¥—</span>
   </div>
   <div class="summary-divider"></div>
   <div class="summary-item">
-    <span class="summary-label">今月の支出</span>
-    <span class="summary-name">Erika<span class="crown" id="crownPartner" style="display:none">👑</span></span>
+    <span class="summary-name">Erika</span>
     <span class="summary-value" id="totalPartner">¥—</span>
   </div>
 </div>
@@ -402,6 +395,7 @@
 </div><!-- /app-header -->
 
 <!-- ★追加：記録状況（昨日の記録漏れ・連続記録） -->
+<main class="content">
 <div class="status-area" id="statusArea"></div>
 
 <div class="pager" id="pager"><div class="pager-track" id="pagerTrack">
@@ -441,6 +435,7 @@
   </div>
 </div>
 </div></div><!-- /pager -->
+</main>
 
 <button class="fab" onclick="openAdd()">＋</button>
 
@@ -705,15 +700,6 @@ function renderSummary(data) {
                      .reduce((s, d) => s + Number(d.amount), 0);
   document.getElementById('totalGenya').textContent   = '¥' + gTotal.toLocaleString();
   document.getElementById('totalPartner').textContent = '¥' + pTotal.toLocaleString();
-
-  const cg = document.getElementById('crownGenya');
-  const cp = document.getElementById('crownPartner');
-  cg.style.display = 'none';
-  cp.style.display = 'none';
-  if (gTotal > 0 || pTotal > 0) {
-    if (gTotal < pTotal)      cg.style.display = 'inline-block';
-    else if (pTotal < gTotal) cp.style.display = 'inline-block';
-  }
 }
 
 function renderCatGrid(tabId, data) {
